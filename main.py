@@ -108,7 +108,7 @@ def release_day_viewers(comp):
 
 
 def usable_comparables(case):
-    """The case's comparables that can serve as analogs: (hour-1, day dict)."""
+    """The case's comparables that can serve as analogs: (name, hour-1, day)."""
     pool = []
     for comp in case.get("comparables") or []:
         day = release_day_viewers(comp)
@@ -117,7 +117,7 @@ def usable_comparables(case):
         present = sum(1 for h in range(2, 25) if h in day)
         if present < MIN_COMPARABLE_HOURS:
             continue
-        pool.append((day[1], day))
+        pool.append((comp.get("name", ""), day[1], day))
     return pool
 
 
@@ -145,7 +145,7 @@ def regression_quantiles(log_v1, pool):
     for h in range(2, 25):
         points = [
             (math.log(v1), math.log(day[h]))
-            for v1, day in pool
+            for _, v1, day in pool
             if h in day
         ]
         fit = ols(points)
@@ -169,14 +169,18 @@ def empirical_quantile(sorted_values, tau):
 
 
 def analog_quantiles(log_v1, pool):
-    """Component B: empirical quantiles of the K nearest comparables."""
+    """Component B: empirical quantiles of the K nearest comparables.
+
+    Nearest by |log hour 1 - log this case's hour 1|; ties break by name, so
+    the neighbor set is deterministic.
+    """
     ranked = sorted(
-        pool, key=lambda item: (abs(math.log(item[0]) - log_v1), item[1].get(1, 0))
+        pool, key=lambda item: (abs(math.log(item[1]) - log_v1), item[0])
     )
     neighbors = ranked[:K_NEIGHBORS]
     out = {}
     for h in range(2, 25):
-        values = sorted(math.log(day[h]) for _, day in neighbors if h in day)
+        values = sorted(math.log(day[h]) for _, _, day in neighbors if h in day)
         if not values:
             continue
         out[h] = [math.exp(empirical_quantile(values, tau)) for tau in LEVELS]
@@ -210,8 +214,9 @@ def forecast_case(case):
     pool = usable_comparables(case)
     reg = regression_quantiles(log_v1, pool)
     ana = analog_quantiles(log_v1, pool)
+    rows = case.get("forecast") or [{"hour": h} for h in range(2, 25)]
     hours = []
-    for row in case.get("forecast") or []:
+    for row in rows:
         h = row["hour"]
         in_reg = h in reg
         in_ana = h in ana
